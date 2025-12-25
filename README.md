@@ -39,10 +39,12 @@ loader-host/
 
 ```bash
 # Install ARM toolchain
-sudo apt install gcc-arm-none-eabi cmake
+cd ~
+sudo apt install -y gcc-arm-none-eabi cmake git python3 python3-pip python3-pyelftools
 
 # Clone Pico SDK
-cd ~/rpi-loader
+git clone https://github.com/ccrome/pico-swd-loader.git
+cd pico-swd-loader
 git clone https://github.com/raspberrypi/pico-sdk.git
 cd pico-sdk
 git submodule update --init
@@ -51,9 +53,9 @@ git submodule update --init
 ### Build Target Firmware
 
 ```bash
-cd ~/rpi-loader/loader-host/target-sdk
+cd ~/pico-swd-loader/target-sdk
 mkdir -p build && cd build
-export PICO_SDK_PATH=~/rpi-loader/pico-sdk
+export PICO_SDK_PATH=~/pico-swd-loader/pico-sdk
 cmake ..
 make -j$(nproc)
 ```
@@ -64,12 +66,11 @@ This creates `ram_blink.elf` - the firmware to be loaded.
 
 ```bash
 # Convert target firmware to C header
-cd ~/rpi-loader/loader-host/host
+cd ~/pico-swd-loader/host
 python3 elf_to_header.py ../target-sdk/build/ram_blink.elf target_firmware.h
 
 # Build host
 mkdir -p build && cd build
-export PICO_SDK_PATH=~/rpi-loader/pico-sdk
 cmake ..
 make -j$(nproc)
 ```
