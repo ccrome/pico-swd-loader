@@ -5,16 +5,21 @@ A complete example of loading and executing firmware on a Raspberry Pi Pico via 
 ## Project Structure
 
 ```
-loader-host/
+pico-swd-loader/
 ├── host/              # SWD loader (runs on host Pico)
 │   ├── main.cpp       # Entry point
 │   ├── swd_load.cpp   # SWD protocol implementation
+│   ├── swd_load.hpp   # SWD loader header
+│   ├── swd_debug.cpp  # Debug helper functions
 │   ├── swd.pio        # PIO bit-banging for SWD
-│   └── elf_to_header.py   # Converts ELF to C header
-├── target-sdk/        # Target firmware (loaded via SWD)
-│   ├── minimal_led.c  # Bare-metal blink firmware
-│   ├── ram_only.ld    # Linker script for RAM execution
+│   ├── pio_helpers.cpp # PIO helper functions
+│   ├── elf_to_header.py   # Converts ELF to C header
+│   ├── monitor.py     # Monitoring script
 │   └── CMakeLists.txt # Build configuration
+├── target-sdk/        # Target firmware (loaded via SWD)
+│   ├── blink_sdk_minimal.c  # Blink firmware using Pico SDK
+│   └── CMakeLists.txt # Build configuration
+├── pico-sdk/          # Raspberry Pi Pico SDK (submodule)
 └── README.md          # This file
 ```
 
@@ -22,8 +27,8 @@ loader-host/
 
 ### Connections (Host Pico → Target Pico)
 
-- **GPIO2 (SWCLK)** → Target SWCLK (Pin 24 / GPIO18)
-- **GPIO3 (SWDIO)** → Target SWDIO (Pin 25 / GPIO19)  
+- **GPIO2 (SWDIO)** → Target SWDIO (Pin 25 / GPIO19)
+- **GPIO3 (SWCLK)** → Target SWCLK (Pin 24 / GPIO18)
 - **GND** → Target GND
 - **VBUS** (optional) → Target VBUS (to power target from host)
 
@@ -85,8 +90,8 @@ This creates `swd_loader.uf2` - the host loader program.
    - Host Pico will reboot and run the loader
 
 2. **Prepare Target Pico:**
-   - Target should have **empty flash** (see ERASE_TARGET_FLASH.md)
-   - Connect wires: SWCLK, SWDIO, GND
+   - Target should have **empty flash** or be in a clean state
+   - Connect wires: SWCLK (GPIO3), SWDIO (GPIO2), GND
    - Power target (via VBUS from host or external power)
 
 3. **Load Firmware:**
@@ -105,89 +110,82 @@ The host bit-bangs the SWD (Serial Wire Debug) protocol using PIO to communicate
 
 ### RAM-Only Execution Flow
 
-1. **Host loads firmware** to target RAM (0x20000000) via SWD
-2. **Set up watchdog boot** - Write magic values to watchdog scratch registers
-3. **Point PC/SP to ROM** - Let ROM bootloader run first
-4. **Start CPU** - Release from halt
-5. **ROM checks watchdog** - Sees boot magic, initializes hardware
-6. **ROM jumps to RAM** - Executes firmware at 0x20000000
-7. **Firmware runs** - Sets VTOR, initializes GPIO, blinks LED
+1. **Host connects via SWD** - Initializes SWD protocol, resets target
+2. **Host halts target CPU** - Puts target in debug halt state
+3. **Host disables XIP** - If using XIP as RAM, disables execute-in-place
+4. **Host loads firmware** - Writes firmware sections to target RAM (0x20000000) via SWD
+5. **Host verifies firmware** - Reads back loaded data to verify integrity
+6. **Host sets PC and SP** - Sets program counter to entry point (0x20000001 with thumb bit) and stack pointer (0x20042000)
+7. **Host resumes CPU** - Releases target from halt, firmware starts executing
+8. **Firmware runs** - Uses Pico SDK to initialize GPIO and blink LED
 
 ### Why This Approach?
 
-- **ROM initialization** - Clocks, PLLs, peripherals set up properly
-- **VTOR setup** - Firmware sets vector table immediately on entry
-- **Bare-metal** - No SDK startup overhead that causes exceptions
-- **Watchdog boot** - Standard RP2040 boot mechanism
+- **Direct RAM execution** - Firmware runs entirely from RAM, no flash required
+- **SDK support** - Target firmware can use Pico SDK functions (gpio_init, sleep_ms, etc.)
+- **Simple development** - Write normal Pico SDK code, no custom vector tables needed
+- **SWD control** - Host has full control over target execution via debug interface
 
 ## Target Firmware Development
 
-The target firmware (`minimal_led.c`) demonstrates:
+The target firmware (`blink_sdk_minimal.c`) demonstrates a simple LED blink using the Pico SDK:
 
-### Custom Vector Table
 ```c
-__attribute__((section(".vectors"))) 
-const void* vector_table[48] = {
-    (void*)0x20042000,      // Initial SP
-    _reset_handler,         // Reset handler
-    // ... exception handlers
-};
-```
+#include "hardware/gpio.h"
+#include "pico/stdlib.h"
 
-### Reset Handler
-```c
-__attribute__((naked, noreturn))
-void _reset_handler(void) {
-    // Set VTOR to our vector table in RAM
-    (*(volatile uint32_t*)0xE000ED08) = 0x20000000;
-    
-    // Disable interrupts during init
-    __asm volatile("cpsid i");
-    
-    // Jump to main
-    __asm volatile("ldr r0, =main\n bx r0\n");
+int main(void) {
+    gpio_init(PICO_DEFAULT_LED_PIN);
+    gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
+
+    while (true) {
+        gpio_put(PICO_DEFAULT_LED_PIN, 1);
+        sleep_ms(50);
+        gpio_put(PICO_DEFAULT_LED_PIN, 0);
+        sleep_ms(50);
+    }
+    return 0;
 }
 ```
 
-### GPIO Direct Access
-```c
-// Enable GPIO25 as output
-SIO_GPIO_OE_SET = (1 << 25);
+The firmware uses standard Pico SDK functions:
+- `gpio_init()` - Initialize GPIO pin
+- `gpio_set_dir()` - Set GPIO direction
+- `gpio_put()` - Set GPIO output level
+- `sleep_ms()` - Sleep for milliseconds
 
-// Blink
-while (1) {
-    SIO_GPIO_OUT_SET = (1 << 25);  // ON
-    busy_wait(250ms);
-    SIO_GPIO_OUT_CLR = (1 << 25);  // OFF
-    busy_wait(250ms);
-}
-```
+The SDK handles all the low-level initialization (clocks, vector tables, etc.) automatically.
 
 ## Modifying Target Firmware
 
 To create your own RAM firmware:
 
-1. Start with `minimal_led.c` as a template
-2. Keep the vector table and reset handler structure
-3. Set VTOR to 0x20000000 in reset handler
-4. Use direct register access (no SDK `runtime_init()`)
-5. Rebuild target and regenerate header
-6. Rebuild and reflash host
+1. Start with `blink_sdk_minimal.c` as a template
+2. Use Pico SDK functions normally (gpio_init, stdio, etc.)
+3. Ensure your code is configured for RAM-only execution (CMakeLists.txt uses `pico_set_binary_type(ram_blink no_flash)`)
+4. Rebuild target: `cd target-sdk/build && make`
+5. Regenerate header: `python3 host/elf_to_header.py target-sdk/build/ram_blink.elf host/target_firmware.h`
+6. Rebuild and reflash host: `cd host/build && make`
 
 ## Debugging
 
-### Enable Debug Output
+### Enable Full Verification
 
-In `host/swd_load.cpp`, change:
+Debug output is always enabled via `mp_printf()` calls throughout the code. To enable full verification of loaded firmware, ensure `FULL_VERIFY` is defined in `host/swd_load.cpp`:
+
 ```cpp
-#if 0  // Debug disabled
-```
-to:
-```cpp
-#if 1  // Debug enabled
+// Enable full verification of loaded firmware
+#define FULL_VERIFY
 ```
 
-This halts the target after loading and dumps registers/PC location.
+This verifies every word of loaded firmware by reading it back after writing. Without this, only the first word is verified.
+
+### Additional Debug Tools
+
+The `host/swd_debug.cpp` file contains helper functions for debugging:
+- `test_gpio_pins()` - Test SWD GPIO pins
+- `print_connection_checklist()` - Print connection requirements
+- `test_target_power()` - Check if target is powered
 
 ### Common Issues
 
