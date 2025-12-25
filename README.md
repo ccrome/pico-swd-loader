@@ -16,10 +16,14 @@ pico-swd-loader/
 │   ├── elf_to_header.py   # Converts ELF to C header
 │   ├── monitor.py     # Monitoring script
 │   └── CMakeLists.txt # Build configuration
-├── target-blink/      # Target firmware (loaded via SWD)
+├── target-blink/      # Target firmware - LED blink example
 │   ├── blink_sdk_minimal.c  # Blink firmware using Pico SDK
 │   └── CMakeLists.txt # Build configuration
+├── target-usb-cdc/    # Target firmware - USB CDC loopback
+│   ├── usb_cdc_loopback.c  # USB CDC echo/loopback example
+│   └── CMakeLists.txt # Build configuration
 ├── pico-sdk/          # Raspberry Pi Pico SDK (submodule)
+├── reload.sh          # Build script for target projects
 └── README.md          # This file
 ```
 
@@ -55,24 +59,54 @@ cd pico-sdk
 git submodule update --init
 ```
 
-### Build Target Firmware
+### Quick Build (Recommended)
+
+Use the `reload.sh` script to build everything automatically:
 
 ```bash
+# Build target-blink (LED blink example)
+./reload.sh target-blink
+
+# Build target-usb-cdc (USB CDC loopback example)
+./reload.sh target-usb-cdc
+```
+
+The script will:
+1. Build the target firmware
+2. Convert the ELF to a C header
+3. Build the host loader
+4. Optionally copy to host Pico if mounted
+
+### Manual Build
+
+#### Build Target Firmware
+
+```bash
+# For target-blink
 cd ~/pico-swd-loader/target-blink
 mkdir -p build && cd build
 export PICO_SDK_PATH=~/pico-swd-loader/pico-sdk
 cmake ..
 make -j$(nproc)
+# Creates: ram_blink.elf
+
+# For target-usb-cdc
+cd ~/pico-swd-loader/target-usb-cdc
+mkdir -p build && cd build
+export PICO_SDK_PATH=~/pico-swd-loader/pico-sdk
+cmake ..
+make -j$(nproc)
+# Creates: ram_usb_cdc.elf
 ```
 
-This creates `ram_blink.elf` - the firmware to be loaded.
-
-### Build Host Loader
+#### Build Host Loader
 
 ```bash
 # Convert target firmware to C header
 cd ~/pico-swd-loader/host
 python3 elf_to_header.py ../target-blink/build/ram_blink.elf target_firmware.h
+# Or for USB CDC:
+# python3 elf_to_header.py ../target-usb-cdc/build/ram_usb_cdc.elf target_firmware.h
 
 # Build host
 mkdir -p build && cd build
@@ -96,7 +130,9 @@ This creates `swd_loader.uf2` - the host loader program.
 
 3. **Load Firmware:**
    - Host automatically loads firmware to target on boot
-   - Target LED (GPIO25) will start **blinking**!
+   - Behavior depends on target project:
+     - **target-blink**: Target LED (GPIO25) will start **blinking**!
+     - **target-usb-cdc**: Target will appear as USB CDC device; connect to it and type characters to see them echoed back
    - Check host serial output: `screen /dev/ttyACM0 115200`
 
 ## How It Works
@@ -126,7 +162,34 @@ The host bit-bangs the SWD (Serial Wire Debug) protocol using PIO to communicate
 - **Simple development** - Write normal Pico SDK code, no custom vector tables needed
 - **SWD control** - Host has full control over target execution via debug interface
 
+## Available Target Projects
+
+### target-blink
+
+Simple LED blink example using the Pico SDK. The target LED will blink continuously after loading.
+
+**Files:**
+- `blink_sdk_minimal.c` - Main firmware source
+
+**Output:**
+- `ram_blink.elf` - Compiled firmware
+
+### target-usb-cdc
+
+USB CDC (Communication Device Class) loopback example. The target appears as a USB serial device and echoes all received characters back.
+
+**Files:**
+- `usb_cdc_loopback.c` - Main firmware source
+
+**Output:**
+- `ram_usb_cdc.elf` - Compiled firmware
+
+**Usage:**
+After loading, connect to the target Pico's USB port. It will appear as a serial device (e.g., `/dev/ttyACM0` on Linux). Any characters you type will be echoed back.
+
 ## Target Firmware Development
+
+### target-blink Example
 
 The target firmware (`blink_sdk_minimal.c`) demonstrates a simple LED blink using the Pico SDK:
 
@@ -156,16 +219,78 @@ The firmware uses standard Pico SDK functions:
 
 The SDK handles all the low-level initialization (clocks, vector tables, etc.) automatically.
 
+### target-usb-cdc Example
+
+The USB CDC loopback firmware (`usb_cdc_loopback.c`) demonstrates USB serial communication:
+
+```c
+#include "pico/stdlib.h"
+#include <stdio.h>
+
+int main(void) {
+    stdio_init_all();  // Initialize USB CDC stdio
+    sleep_ms(1000);    // Wait for USB enumeration
+    
+    printf("\n=== USB CDC Loopback ===\n");
+    
+    while (true) {
+        int c = getchar_timeout_us(0);  // Non-blocking read
+        if (c != PICO_ERROR_TIMEOUT) {
+            putchar(c);  // Echo character back
+            if (c == '\n' || c == '\r') {
+                fflush(stdout);
+            }
+        }
+        sleep_us(100);
+    }
+    return 0;
+}
+```
+
+This firmware:
+- Initializes USB CDC stdio
+- Reads characters from USB input
+- Echoes them back to USB output
+- Works as a simple serial loopback device
+
 ## Modifying Target Firmware
 
 To create your own RAM firmware:
 
-1. Start with `blink_sdk_minimal.c` as a template
-2. Use Pico SDK functions normally (gpio_init, stdio, etc.)
-3. Ensure your code is configured for RAM-only execution (CMakeLists.txt uses `pico_set_binary_type(ram_blink no_flash)`)
-4. Rebuild target: `cd target-blink/build && make`
-5. Regenerate header: `python3 host/elf_to_header.py target-blink/build/ram_blink.elf host/target_firmware.h`
-6. Rebuild and reflash host: `cd host/build && make`
+1. **Copy an existing target project** as a template:
+   ```bash
+   cp -r target-blink target-myproject
+   # Or: cp -r target-usb-cdc target-myproject
+   ```
+
+2. **Modify the source code** in your new target directory
+
+3. **Update CMakeLists.txt**:
+   - Change `project()` name to match your project
+   - Change `add_executable()` name
+   - Update `pico_set_binary_type()` to use your executable name
+   - Configure stdio (USB/UART) as needed
+
+4. **Add to reload.sh** (optional):
+   - Add your target to the case statement
+   - Map it to the correct ELF filename
+
+5. **Build using reload.sh**:
+   ```bash
+   ./reload.sh target-myproject
+   ```
+
+   Or build manually:
+   ```bash
+   cd target-myproject
+   mkdir -p build && cd build
+   export PICO_SDK_PATH=../../pico-sdk
+   cmake ..
+   make -j$(nproc)
+   python3 ../../host/elf_to_header.py <your-elf-name>.elf ../../host/target_firmware.h
+   cd ../../host/build
+   make
+   ```
 
 ## Debugging
 

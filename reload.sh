@@ -2,9 +2,43 @@
 set -e
 ROOTDIR=`pwd`
 
+# Check for target parameter
+if [ -z "$1" ]; then
+    echo "Usage: $0 <target-project>"
+    echo ""
+    echo "Available targets:"
+    echo "  target-blink    - Blink LED example"
+    echo "  target-usb-cdc   - USB CDC loopback example"
+    exit 1
+fi
+
+TARGET_PROJECT=$1
+
+# Validate target project exists
+if [ ! -d "$TARGET_PROJECT" ]; then
+    echo "Error: Target project '$TARGET_PROJECT' not found"
+    echo "Available targets: target-blink, target-usb-cdc"
+    exit 1
+fi
+
+# Determine ELF filename based on target
+case $TARGET_PROJECT in
+    target-blink)
+        ELF_NAME="ram_blink.elf"
+        ;;
+    target-usb-cdc)
+        ELF_NAME="ram_usb_cdc.elf"
+        ;;
+    *)
+        echo "Error: Unknown target project '$TARGET_PROJECT'"
+        echo "Available targets: target-blink, target-usb-cdc"
+        exit 1
+        ;;
+esac
+
 # Build target firmware
-echo "Building target firmware..."
-cd target-blink
+echo "Building target firmware: $TARGET_PROJECT..."
+cd $TARGET_PROJECT
 rm -rf build && mkdir build && cd build
 export PICO_SDK_PATH=$ROOTDIR/pico-sdk
 cmake ..
@@ -13,7 +47,7 @@ echo "✓ Target firmware built"
 
 # Convert ELF to header
 echo "Converting ELF to header..."
-python3 ../../host/elf_to_header.py ram_blink.elf ../../host/target_firmware.h
+python3 ../../host/elf_to_header.py $ELF_NAME ../../host/target_firmware.h
 echo "✓ Header generated"
 
 # Build host loader
