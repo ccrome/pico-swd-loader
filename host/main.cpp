@@ -16,10 +16,6 @@ int main() {
     // Initialize stdio for debug output
     stdio_init_all();
     
-    // Wait for USB serial to enumerate and terminal to connect
-    // This gives time for the USB CDC device to be recognized by the host
-    sleep_ms(3000);
-    
     printf("\n========================================\n");
     printf("  SWD Loader - Hello World Example\n");
     printf("========================================\n\n");
