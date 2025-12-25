@@ -16,7 +16,7 @@ pico-swd-loader/
 │   ├── elf_to_header.py   # Converts ELF to C header
 │   ├── monitor.py     # Monitoring script
 │   └── CMakeLists.txt # Build configuration
-├── target-sdk/        # Target firmware (loaded via SWD)
+├── target-blink/      # Target firmware (loaded via SWD)
 │   ├── blink_sdk_minimal.c  # Blink firmware using Pico SDK
 │   └── CMakeLists.txt # Build configuration
 ├── pico-sdk/          # Raspberry Pi Pico SDK (submodule)
@@ -58,7 +58,7 @@ git submodule update --init
 ### Build Target Firmware
 
 ```bash
-cd ~/pico-swd-loader/target-sdk
+cd ~/pico-swd-loader/target-blink
 mkdir -p build && cd build
 export PICO_SDK_PATH=~/pico-swd-loader/pico-sdk
 cmake ..
@@ -72,7 +72,7 @@ This creates `ram_blink.elf` - the firmware to be loaded.
 ```bash
 # Convert target firmware to C header
 cd ~/pico-swd-loader/host
-python3 elf_to_header.py ../target-sdk/build/ram_blink.elf target_firmware.h
+python3 elf_to_header.py ../target-blink/build/ram_blink.elf target_firmware.h
 
 # Build host
 mkdir -p build && cd build
@@ -163,8 +163,8 @@ To create your own RAM firmware:
 1. Start with `blink_sdk_minimal.c` as a template
 2. Use Pico SDK functions normally (gpio_init, stdio, etc.)
 3. Ensure your code is configured for RAM-only execution (CMakeLists.txt uses `pico_set_binary_type(ram_blink no_flash)`)
-4. Rebuild target: `cd target-sdk/build && make`
-5. Regenerate header: `python3 host/elf_to_header.py target-sdk/build/ram_blink.elf host/target_firmware.h`
+4. Rebuild target: `cd target-blink/build && make`
+5. Regenerate header: `python3 host/elf_to_header.py target-blink/build/ram_blink.elf host/target_firmware.h`
 6. Rebuild and reflash host: `cd host/build && make`
 
 ## Debugging

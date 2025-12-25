@@ -4,7 +4,7 @@ ROOTDIR=`pwd`
 
 # Build target firmware
 echo "Building target firmware..."
-cd target-sdk
+cd target-blink
 rm -rf build && mkdir build && cd build
 export PICO_SDK_PATH=$ROOTDIR/pico-sdk
 cmake ..
